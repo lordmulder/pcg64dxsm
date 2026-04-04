@@ -23,11 +23,19 @@ Options:
 
 ## Acknowledgement
 
+### PCG random number generators
+
 This application is built upon the [**`rand_pcg`**](https://crates.io/crates/rand_pcg) create, created by the Rand project contributors.
 
 Please see [`Lcg128CmDxsm64`](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Lcg128CmDxsm64.html) and [`Mcg128Xsl64`](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Mcg128Xsl64.html) for details! 
 
 `rand_pcg` is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
+
+### Dice icon
+
+This application uses the [Dice icon](https://www.flaticon.com/free-icons/dice) created by Prosymbols Premium.
+
+Provided under the Flaticon License. Free for personal and commercial purpose with attribution.
 
 ## License
 
