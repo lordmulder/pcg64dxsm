@@ -2,9 +2,9 @@
 
 Blazing fast random number generator based on **Lcg128CmDxsm64** (CM DXSM 128/64 LCG).
 
-Permuted Congruential Generator (PCG) with 128-bit state, internal Linear Congruential Generator (LCG), and 64-bit output via “double xorshift multiply” (DXSM) output function; also known as `PCG64DXSM`. Despite the name, this implementation uses 32 bytes (256 bit) space comprising 128 bits of state and 128 bits stream selector. It can be seeded from the OS' entropy source or with a user-defined seed value for reproducible output.
+Permuted Congruential Generator (PCG) with 128-bit state, internal Linear Congruential Generator (LCG), and 64-bit output via “double xorshift multiply” (DXSM) output function; also known as **`pcg64_dxsm`**. Despite the name, this implementation uses 32 bytes (256 bit) space comprising 128 bits of state and 128 bits stream selector. It can be seeded from the OS' entropy source or with a user-defined seed value for reproducible output.
 
-Optionally, `--fast` mode uses the **Mcg128Xsl64** (XSL 128/64 MCG) random number generator; also known as `pcg64_fast`. It runs even faster, but may provide slightly worse (but still good) statistical properties.
+Optionally, `--fast` mode uses the **Mcg128Xsl64** (XSL 128/64 MCG) random number generator; also known as **`pcg64_fast`**. It runs even faster, but may provide slightly worse (but still good) statistical properties.
 
 ## Manual
 
@@ -23,9 +23,9 @@ Options:
 
 ## Acknowledgement
 
-This application is built upon the [`rand_pcg`](https://crates.io/crates/rand_pcg) create, created by the Rand project contributors.
+This application is built upon the [**`rand_pcg`**](https://crates.io/crates/rand_pcg) create, created by the Rand project contributors.
 
-Please see [**`Lcg128CmDxsm64`**](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Lcg128CmDxsm64.html) and [**`Mcg128Xsl64`**](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Mcg128Xsl64.html) for details! 
+Please see [`Lcg128CmDxsm64`](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Lcg128CmDxsm64.html) and [`Mcg128Xsl64`](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Mcg128Xsl64.html) for details! 
 
 `rand_pcg` is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
 

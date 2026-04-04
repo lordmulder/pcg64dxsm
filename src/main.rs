@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: 0BSD
-// Lcg128CmDxsm64 (PCG64DXSM)
+// SPDX-License-Identifier: Unlicense
+// pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
 use clap::Parser;
+use hex_literal::hex;
 use hkdf::Hkdf;
 use parking_lot::{Condvar, Mutex};
 use rand_pcg::{
@@ -146,7 +147,12 @@ fn generate_st(mut generator: impl Rng, mut output: impl Write) {
 // Utilities
 // ===========================================================================
 
-const SALT_VALUE: &[u8; 32usize] = b"\x27\x92\xAD\x8B\x34\x21\xFD\xFD\x73\x09\x87\xE6\x91\x45\x76\xD0\xD0\xC6\x80\x2A\x4E\x79\x77\xB2\x5D\x93\xA3\x2A\x61\xF3\x37\x2C";
+/// First 32 bytes of the fractional part of ***e*** (Euler's number)
+///
+/// This is an arbitrary but unsuspicious (nothing-up-my-sleeve) choice for a sufficiantly "random" value that we can use as a salt.
+///
+/// Replace with a custom "salt" value as needed!
+const SALT_VALUE: [u8; 32usize] = hex!("B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF");
 
 fn derive_seed<const N: usize>(input: u128, label: &[u8]) -> [u8; N] {
     let mut seed_value = [0u8; _];
@@ -177,31 +183,25 @@ struct Args {
     fast: bool,
 
     /// User-defined seed value; if not specified, seed from OS entropy source
-    #[arg(conflicts_with = "entropy")]
     seed: Option<u128>,
 }
 
 fn main() {
     let args = Args::parse();
-    let output = stdout().lock();
 
     let generator = if !args.fast {
         match args.seed {
-            Some(seed_value) => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(derive_seed(
-                seed_value,
-                b"Lcg128CmDxsm64",
-            ))),
+            Some(input) => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(derive_seed(input, b"Lcg128CmDxsm64"))),
             None => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(get_os_entropy())),
         }
     } else {
         match args.seed {
-            Some(seed_value) => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(derive_seed(
-                seed_value,
-                b"Mcg128Xsl64",
-            ))),
+            Some(input) => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(derive_seed(input, b"Mcg128Xsl64"))),
             None => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(get_os_entropy())),
         }
     };
+
+    let output = stdout().lock();
 
     if args.thread {
         match generator {
