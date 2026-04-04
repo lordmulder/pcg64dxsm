@@ -6,7 +6,7 @@ use clap::Parser;
 use hkdf::Hkdf;
 use parking_lot::{Condvar, Mutex};
 use rand_pcg::{
-    Lcg128CmDxsm64,
+    Lcg128CmDxsm64, Mcg128Xsl64,
     rand_core::{Rng, SeedableRng},
 };
 use sha3::Sha3_256;
@@ -15,6 +15,12 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     thread,
 };
+
+/// Supported random number generators
+enum Generator {
+    Pcg64Dxsm(Lcg128CmDxsm64),
+    Pcg64Mcg(Mcg128Xsl64),
+}
 
 // ===========================================================================
 // MT Generator
@@ -142,14 +148,14 @@ fn generate_st(mut generator: impl Rng, mut output: impl Write) {
 
 const SALT_VALUE: &[u8; 32usize] = b"\x27\x92\xAD\x8B\x34\x21\xFD\xFD\x73\x09\x87\xE6\x91\x45\x76\xD0\xD0\xC6\x80\x2A\x4E\x79\x77\xB2\x5D\x93\xA3\x2A\x61\xF3\x37\x2C";
 
-fn derive_seed(input: u128) -> [u8; 32usize] {
+fn derive_seed<const N: usize>(input: u128, label: &[u8]) -> [u8; N] {
     let mut seed_value = [0u8; _];
     let hkdf = Hkdf::<Sha3_256>::new(Some(&SALT_VALUE[..]), &input.to_be_bytes());
-    hkdf.expand(b"Lcg128CmDxsm64", &mut seed_value).unwrap();
+    hkdf.expand(label, &mut seed_value).unwrap();
     seed_value
 }
 
-fn get_os_entropy() -> [u8; 32usize] {
+fn get_os_entropy<const N: usize>() -> [u8; N] {
     let mut seed_value = [0u8; _];
     getrandom::fill(&mut seed_value).expect("Failed to generate seed!");
     seed_value
@@ -162,9 +168,13 @@ fn get_os_entropy() -> [u8; 32usize] {
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// Enable multi-threading
+    /// Enable multi-threaded random number generation
     #[arg(short, long)]
     thread: bool,
+
+    /// Use faster algorithm, with slightly worse statistical properties
+    #[arg(short, long)]
+    fast: bool,
 
     /// User-defined seed value; if not specified, seed from OS entropy source
     #[arg(conflicts_with = "entropy")]
@@ -175,14 +185,33 @@ fn main() {
     let args = Args::parse();
     let output = stdout().lock();
 
-    let generator = match args.seed {
-        Some(seed_value) => Lcg128CmDxsm64::from_seed(derive_seed(seed_value)),
-        None => Lcg128CmDxsm64::from_seed(get_os_entropy()),
+    let generator = if !args.fast {
+        match args.seed {
+            Some(seed_value) => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(derive_seed(
+                seed_value,
+                b"Lcg128CmDxsm64",
+            ))),
+            None => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(get_os_entropy())),
+        }
+    } else {
+        match args.seed {
+            Some(seed_value) => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(derive_seed(
+                seed_value,
+                b"Mcg128Xsl64",
+            ))),
+            None => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(get_os_entropy())),
+        }
     };
 
     if args.thread {
-        generate_mt(generator, output);
+        match generator {
+            Generator::Pcg64Dxsm(pcg64dxsm) => generate_mt(pcg64dxsm, output),
+            Generator::Pcg64Mcg(pcg64mcg) => generate_mt(pcg64mcg, output),
+        }
     } else {
-        generate_st(generator, output);
+        match generator {
+            Generator::Pcg64Dxsm(pcg64dxsm) => generate_st(pcg64dxsm, output),
+            Generator::Pcg64Mcg(pcg64mcg) => generate_st(pcg64mcg, output),
+        }
     }
 }
