@@ -23,16 +23,21 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
     let mut length = 0u64;
     let mut buffer = [0u8; BUFFER_SIZE];
 
-    while length < OUTPUT_SIZE {
-        let remaining = (OUTPUT_SIZE - length).min(BUFFER_SIZE as u64) as usize;
-        let read_size = stdout.read(&mut buffer[..remaining]).expect("Failed to read data!");
-        assert!(read_size > 0usize);
-        length = length.checked_add(read_size as u64).unwrap();
+    loop {
+        let chunk_size = OUTPUT_SIZE.saturating_sub(length).min(BUFFER_SIZE as u64) as usize;
+        if chunk_size == 0usize {
+            break;
+        }
+        let read_len = stdout.read(&mut buffer[..chunk_size]).expect("Failed to read data!");
+        if read_len == 0usize {
+            break;
+        }
+        length = length.checked_add(read_len as u64).unwrap();
     }
 
-    assert_eq!(length, OUTPUT_SIZE);
-    _ = child_process.kill();
+    drop(stdout);
     child_process.wait().expect("Failed to wait for child process!");
+    assert_eq!(length, OUTPUT_SIZE);
 }
 
 // ===========================================================================

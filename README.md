@@ -15,10 +15,11 @@ Arguments:
   [SEED]  User-defined seed value; if not specified, seed from OS entropy source
 
 Options:
-  -t, --thread   Enable multi-threaded random number generation
-  -f, --fast     Use faster algorithm, with slightly worse statistical properties
-  -h, --help     Print help
-  -V, --version  Print version
+  -t, --thread         Enable multi-threaded random number generation
+  -f, --fast           Use faster algorithm, with slightly worse properties
+  -c, --count <COUNT>  Limit output the the specified number of bytes
+  -h, --help           Print help
+  -V, --version        Print version
 ```
 
 ## Acknowledgement
@@ -33,7 +34,7 @@ Please see [`Lcg128CmDxsm64`](https://docs.rs/rand_pcg/latest/rand_pcg/struct.Lc
 
 ### Dice icon
 
-This application uses the [Dice icon](https://www.flaticon.com/free-icons/dice) created by Prosymbols Premium.
+This application uses the [Dice icon](https://www.flaticon.com/free-icon/dice_16778044) created by Prosymbols Premium.
 
 Provided under the Flaticon License. Free for personal and commercial purpose with attribution.
 

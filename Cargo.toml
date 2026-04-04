@@ -20,6 +20,15 @@ rolling-median = "1.5.5"
 [target.'cfg(windows)'.build-dependencies]
 winres = { version = "0.1.12", default-features = false }
 
+[package.metadata.winres]
+Comments = "SPDX-License-Identifier: Unlicense"
+CompanyName = "LoRd_MuldeR <mulder2@gmx.de>"
+FileDescription = "PCG64DXSM command-line application"
+InternalName = "pcg64dxsm"
+LegalCopyright = "Copyright © 2026 by LoRd_MuldeR <mulder2@gmx.de>"
+OriginalFilename = "pcg64dxsm.exe"
+ProductName = "Lcg128CmDxsm64 (PCG64DXSM)"
+
 [[bench]]
 name = "rng_bench"
 harness = false
