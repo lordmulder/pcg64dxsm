@@ -11,8 +11,11 @@ use std::{
     process::{Command, Stdio},
 };
 
-const BUFFER_SIZE: usize = 8192usize;
+const BUFFER_SIZE: usize = 1024usize * 1024usize; //  1 MB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
+
+const ENTROPY_SIZE: u64 = 16u64 * 1024u64 * 1024u64; // 16 MB
+const ENTROPY_ITER: usize = 1024usize;
 
 // ===========================================================================
 // Utilities
@@ -29,22 +32,22 @@ impl<'a> UpperHex for Hex<'a> {
     }
 }
 
-fn run_process<const N: usize>(args: [&OsStr; N]) -> [u8; 64usize] {
+fn run_process<const N: usize>(output_size: u64, args: [&OsStr; N]) -> [u8; 64usize] {
     let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm")).args(args).stdout(Stdio::piped()).spawn().expect("Failed to spawn process!");
     let mut stdout = child_process.stdout.take().expect("No stdout!");
     let mut buffer = [0u8; BUFFER_SIZE];
     let mut length = 0u64;
     let mut hasher = Sha3_512::default();
 
-    while length < OUTPUT_SIZE {
-        let remaining = (OUTPUT_SIZE - length).min(BUFFER_SIZE as u64) as usize;
+    while length < output_size {
+        let remaining = (output_size - length).min(BUFFER_SIZE as u64) as usize;
         let read_size = stdout.read(&mut buffer[..remaining]).expect("Failed to read data!");
         assert!(read_size > 0usize);
         hasher.update(&buffer[..read_size]);
         length = length.checked_add(read_size as u64).unwrap();
     }
 
-    assert_eq!(length, OUTPUT_SIZE);
+    assert_eq!(length, output_size);
     _ = child_process.kill();
     child_process.wait().expect("Failed to wait for child process!");
 
@@ -72,6 +75,12 @@ macro_rules! digest_eq {
     };
 }
 
+macro_rules! digest_ne {
+    ($a:ident, $b:ident) => {
+        assert!(!_digest_eq(&$a, &$b));
+    };
+}
+
 // ===========================================================================
 // Test Cases
 // ===========================================================================
@@ -96,38 +105,54 @@ const PCG64FAST_2: [u8; 64usize] =
 
 #[test]
 fn test_pcg64dxsm_0() {
-    let digest = run_process([OsStr::new("0")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_0);
 }
 
 #[test]
 fn test_pcg64dxsm_1() {
-    let digest = run_process([OsStr::new("1")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("1")]);
     digest_eq!(digest, PCG64DXSM_1);
 }
 
 #[test]
 fn test_pcg64dxsm_2() {
-    let digest = run_process([OsStr::new("2")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("2")]);
     digest_eq!(digest, PCG64DXSM_2);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_0() {
-    let digest = run_process([OsStr::new("--thread"), OsStr::new("0")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--thread"), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_0);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_1() {
-    let digest = run_process([OsStr::new("--thread"), OsStr::new("1")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--thread"), OsStr::new("1")]);
     digest_eq!(digest, PCG64DXSM_1);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_2() {
-    let digest = run_process([OsStr::new("--thread"), OsStr::new("2")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--thread"), OsStr::new("2")]);
     digest_eq!(digest, PCG64DXSM_2);
+}
+
+#[test]
+fn test_pcg64dxsm_entropy() {
+    let mut digest_all: Vec<[u8; 64usize]> = Vec::with_capacity(ENTROPY_ITER);
+    for _i in 0usize..ENTROPY_ITER {
+        digest_all.push(run_process(ENTROPY_SIZE, []));
+    }
+
+    for (i, &digest_1) in digest_all.iter().enumerate() {
+        for (j, &digest_2) in digest_all.iter().enumerate() {
+            if i != j {
+                digest_ne!(digest_1, digest_2);
+            }
+        }
+    }
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -136,36 +161,52 @@ fn test_pcg64dxsm_threaded_2() {
 
 #[test]
 fn test_pcg64fast_0() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("0")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_0);
 }
 
 #[test]
 fn test_pcg64fast_1() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("1")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("1")]);
     digest_eq!(digest, PCG64FAST_1);
 }
 
 #[test]
 fn test_pcg64fast_2() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("2")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("2")]);
     digest_eq!(digest, PCG64FAST_2);
 }
 
 #[test]
 fn test_pcg64fast_threaded_0() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("0")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_0);
 }
 
 #[test]
 fn test_pcg64fast_threaded_1() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("1")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("1")]);
     digest_eq!(digest, PCG64FAST_1);
 }
 
 #[test]
 fn test_pcg64fast_threaded_2() {
-    let digest = run_process([OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("2")]);
+    let digest = run_process(OUTPUT_SIZE, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("2")]);
     digest_eq!(digest, PCG64FAST_2);
+}
+
+#[test]
+fn test_pcg64fast_entropy() {
+    let mut digest_all: Vec<[u8; 64usize]> = Vec::with_capacity(ENTROPY_ITER);
+    for _i in 0usize..ENTROPY_ITER {
+        digest_all.push(run_process(ENTROPY_SIZE, [OsStr::new("--fast")]));
+    }
+
+    for (i, &digest_1) in digest_all.iter().enumerate() {
+        for (j, &digest_2) in digest_all.iter().enumerate() {
+            if i != j {
+                digest_ne!(digest_1, digest_2);
+            }
+        }
+    }
 }

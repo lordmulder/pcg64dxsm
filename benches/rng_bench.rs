@@ -2,15 +2,15 @@
 // pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use rolling_median::Median;
 use std::{
     ffi::OsStr,
     io::Read,
     process::{Command, Stdio},
-    time::Duration,
+    time::Instant,
 };
 
-const BUFFER_SIZE: usize = 8192usize;
+const BUFFER_SIZE: usize = 1024usize * 1024usize; //  1 MB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 // ===========================================================================
@@ -39,18 +39,39 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
 // Benchmarks
 // ===========================================================================
 
-fn prng_bench(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rng_bench");
-    group.sample_size(13);
-    group.measurement_time(Duration::from_secs(600));
-    group.warm_up_time(Duration::from_secs(180));
-    group.throughput(Throughput::Bytes(OUTPUT_SIZE));
-    group.bench_function("pcg64dxsm-ST", |b| b.iter(|| run_process([])));
-    group.bench_function("pcg64dxsm-MT", |b| b.iter(|| run_process([OsStr::new("--thread")])));
-    group.bench_function("pcg64fast-ST", |b| b.iter(|| run_process([OsStr::new("--fast")])));
-    group.bench_function("pcg64fast-MT", |b| b.iter(|| run_process([OsStr::new("--fast"), OsStr::new("--thread")])));
-    group.finish();
+const REPEAT_COUNT: usize = 9usize;
+
+fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
+    println!("[{}]", name);
+    let mut median: Median<f64> = Median::new();
+
+    println!("Warm-up pass is running, please wait...");
+    bench_fn();
+    println!("Warm-up pass completed.");
+
+    for i in 0usize..REPEAT_COUNT {
+        let start_time = Instant::now();
+        bench_fn();
+        let elapsed = start_time.elapsed().as_secs_f64();
+        println!("Run {} of {}: Execution completed after {:.2} second(s)", i + 1usize, REPEAT_COUNT, elapsed);
+        median.push(elapsed).unwrap();
+    }
+
+    let median_time = median.get().unwrap();
+    let throughput = (OUTPUT_SIZE as f64) / median_time / 1048576f64;
+    println!("Finished -> Median execution time: {:.2} second(s) [{:.2} MiB/s]\n", median_time, throughput);
+    throughput
 }
 
-criterion_group!(benches, prng_bench);
-criterion_main!(benches);
+fn main() {
+    let pcg64dxsm_st = run_bench("pcg64dxsm-ST", || run_process([]));
+    let pcg64dxsm_mt = run_bench("pcg64dxsm-MT", || run_process([OsStr::new("--thread")]));
+    let pcg64fast_st = run_bench("pcg64fast-ST", || run_process([OsStr::new("--fast")]));
+    let pcg64fast_mt = run_bench("pcg64fast-MT", || run_process([OsStr::new("--fast"), OsStr::new("--thread")]));
+
+    println!("[Summary]");
+    println!("pcg64dxsm-ST: {:.2} MiB/s", pcg64dxsm_st);
+    println!("pcg64dxsm-MT: {:.2} MiB/s", pcg64dxsm_mt);
+    println!("pcg64fast-ST: {:.2} MiB/s", pcg64fast_st);
+    println!("pcg64fast-MT: {:.2} MiB/s", pcg64fast_mt);
+}

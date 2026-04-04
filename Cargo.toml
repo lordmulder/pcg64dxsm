@@ -15,7 +15,7 @@ rand_pcg = "0.10.1"
 sha3 = "0.11.0"
 
 [dev-dependencies]
-criterion = "0.8.2"
+rolling-median = "1.5.5"
 
 [[bench]]
 name = "rng_bench"
