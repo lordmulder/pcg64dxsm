@@ -23,6 +23,14 @@ Options:
   -V, --version        Print version
 ```
 
+## Source
+
+Official Git mirrors:
+
+* <https://github.com/lordmulder/pcg64dxsm>
+* <https://codeberg.org/MuldeR/pcg64dxsm>
+* <https://gitlab.com/lord_mulder/pcg64dxsm>
+
 ## Acknowledgement
 
 ### PCG random number generators
