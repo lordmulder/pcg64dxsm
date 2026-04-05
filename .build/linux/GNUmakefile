@@ -59,13 +59,14 @@ xbuild:
 doc:
 	mkdir -p out/target/release /tmp/rust-build
 	export CARGO_TARGET_DIR="$$(mktemp --tmpdir=/tmp/rust-build -d)"
+	pandoc --standalone -t html5 -V maxwidth=48em -o out/target/release/README.html ../../README.md
 	RUSTFLAGS=-Dwarnings cargo pkgid | grep -Eo '[^#@]+$$' | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//' > out/target/.PKG_VERSION
 	printf '%s\n\n' "$$(RUSTFLAGS=-Dwarnings cargo --version --verbose)" > out/target/.RUSTC_VERSION
 	printf '%s\n' "$$(RUSTFLAGS=-Dwarnings cargo rustc --manifest-path ../.auxiliary-files/blank-project/Cargo.toml -- --version --verbose)" >> out/target/.RUSTC_VERSION
 	rm -rf $${CARGO_TARGET_DIR}
 
 dist: build wbuild xbuild doc
-	cp -f ../../LICENSE ../../README.md out/target/release
+	cp -f ../../LICENSE out/target/release/LICENSE
 	printf 'Revision: %s\n' "$$(git describe --long --tags --always --dirty)" > out/target/release/BUILD_INFO
 	printf 'Built: %s\n\n' "$$(date +'%Y-%m-%d %H:%M:%S')" >> out/target/release/BUILD_INFO
 	cat out/target/.RUSTC_VERSION >> out/target/release/BUILD_INFO

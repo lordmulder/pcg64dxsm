@@ -18,6 +18,10 @@ if "%SEVENZIP_INSTALL_DIR%" == "" (
 	set "SEVENZIP_INSTALL_DIR=%ProgramFiles%\7-Zip"
 )
 
+if "%PANDOC_INSTALL_DIR%" == "" (
+	set "PANDOC_INSTALL_DIR=%ProgramFiles%\Pandoc"
+)
+
 REM --------------------------------------------------------------------------
 REM Check paths
 REM --------------------------------------------------------------------------
@@ -43,7 +47,12 @@ if exist "%SEVENZIP_INSTALL_DIR%\7za.exe" (
 	)
 )
 
-set "PATH=%CD%\bin;%CARGO_INSTALL_DIR%;%GIT_INSTALL_DIR%\cmd;%SEVENZIP_INSTALL_DIR%;%SystemRoot%\System32;%SystemRoot%"
+if not exist "%PANDOC_INSTALL_DIR%\pandoc.exe" (
+	echo File "%PANDOC_INSTALL_DIR%\pandoc.exe" not found. Please check PANDOC_INSTALL_DIR and try again^^!
+	goto:error
+)
+
+set "PATH=%CD%\bin;%CARGO_INSTALL_DIR%;%GIT_INSTALL_DIR%\cmd;%SEVENZIP_INSTALL_DIR%;%PANDOC_INSTALL_DIR%;%SystemRoot%\System32;%SystemRoot%"
 
 REM --------------------------------------------------------------------------
 REM Check the Rust version
@@ -160,6 +169,8 @@ REM --------------------------------------------------------------------------
 REM Create info
 REM --------------------------------------------------------------------------
 
+pandoc --standalone -t html5 -V maxwidth=48em -o "out\target\release\README.html" "..\..\README.md" || goto:error
+
 set "RUSTFLAGS=-Dwarnings"
 
 cargo --version --verbose > "%CARGO_TARGET_DIR%\.RUSTC_VERSION"
@@ -180,7 +191,6 @@ REM Packaging
 REM --------------------------------------------------------------------------
 
 copy /B /Y "..\..\LICENSE" "out\target\release\LICENSE.txt" || goto:error
-copy /B /Y "..\..\README.md" "out\target\release\README.md" || goto:error
 attrib +R "out\target\release\*.*" /S || goto:error
 
 pushd "out\target\release"
