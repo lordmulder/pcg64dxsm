@@ -16,8 +16,9 @@ Arguments:
 
 Options:
   -t, --thread         Enable multi-threaded random number generation
-  -f, --fast           Use faster algorithm, with slightly worse properties
+  -f, --fast           Use a faster algorithm (pcg64_fast) with slightly worse properties
   -c, --count <COUNT>  Limit output the the specified number of bytes
+  -H, --hex            Output random data as hex-encoded string; default is "raw" bytes
   -h, --help           Print help
   -V, --version        Print version
 ```

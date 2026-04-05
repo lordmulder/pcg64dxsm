@@ -3,6 +3,7 @@
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
 use clap::Parser;
+use hex::encode_to_slice;
 use hex_literal::hex;
 use hkdf::Hkdf;
 use parking_lot::{Condvar, Mutex};
@@ -12,7 +13,8 @@ use rand_pcg::{
 };
 use sha3::Sha3_256;
 use std::{
-    io::{Write, stdout},
+    io::{Error as IoError, StdoutLock, Write, stdout},
+    mem::MaybeUninit,
     sync::atomic::{AtomicBool, Ordering},
     thread,
 };
@@ -50,6 +52,23 @@ fn get_os_entropy<const N: usize>() -> [u8; N] {
 #[inline(always)]
 fn remaining(total_bytes: u64, bytes_written: u64) -> usize {
     total_bytes.saturating_sub(bytes_written).min(BUFF_SIZE as u64) as usize
+}
+
+// ===========================================================================
+// Output Functions
+// ===========================================================================
+
+#[inline(always)]
+fn write_raw(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
+    output.write_all(data)
+}
+
+#[inline(always)]
+fn write_hex(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
+    let mut array: MaybeUninit<[u8; 2usize * BUFF_SIZE]> = MaybeUninit::uninit();
+    let hex_buffer = unsafe { array.assume_init_mut() };
+    encode_to_slice(data, hex_buffer).unwrap();
+    output.write_all(&hex_buffer[..(2usize * data.len())])
 }
 
 // ===========================================================================
@@ -118,7 +137,10 @@ static COND_USED: [Condvar; NUM_BUFFERS] = [
     Condvar::new(),
 ];
 
-fn generate_mt(mut generator: impl Rng + Send + 'static, mut output: impl Write, count: Option<u64>) {
+fn generate_mt<F>(mut generator: impl Rng + Send + 'static, mut output: StdoutLock, write_fn: F, count: Option<u64>)
+where
+    F: Fn(&mut dyn Write, &[u8]) -> Result<(), IoError>,
+{
     let mut bytes_written = 0u64;
 
     let handle = thread::spawn(move || {
@@ -145,7 +167,7 @@ fn generate_mt(mut generator: impl Rng + Send + 'static, mut output: impl Write,
             while !buffer.0 {
                 COND_USED[i].wait(&mut buffer);
             }
-            if output.write_all(&buffer.1[..chunk_size]).is_err() {
+            if write_fn(&mut output, &buffer.1[..chunk_size]).is_err() {
                 break 'out_loop;
             }
             bytes_written += chunk_size as u64;
@@ -169,7 +191,10 @@ fn generate_mt(mut generator: impl Rng + Send + 'static, mut output: impl Write,
 // ST Generator
 // ===========================================================================
 
-fn generate_st(mut generator: impl Rng, mut output: impl Write, count: Option<u64>) {
+fn generate_st<F>(mut generator: impl Rng, mut output: StdoutLock, write_fn: F, count: Option<u64>)
+where
+    F: Fn(&mut dyn Write, &[u8]) -> Result<(), IoError>,
+{
     let mut bytes_written = 0u64;
     let mut buffer = [0u8; BUFF_SIZE];
 
@@ -177,7 +202,7 @@ fn generate_st(mut generator: impl Rng, mut output: impl Write, count: Option<u6
         while bytes_written < total_bytes {
             let chunk_size = remaining(total_bytes, bytes_written);
             generator.fill_bytes(&mut buffer[..chunk_size]);
-            if output.write_all(&buffer[..chunk_size]).is_err() {
+            if write_fn(&mut output, &buffer[..chunk_size]).is_err() {
                 break;
             }
             bytes_written += chunk_size as u64;
@@ -185,7 +210,7 @@ fn generate_st(mut generator: impl Rng, mut output: impl Write, count: Option<u6
     } else {
         loop {
             generator.fill_bytes(&mut buffer);
-            if output.write_all(&buffer).is_err() {
+            if write_fn(&mut output, &buffer).is_err() {
                 break;
             }
         }
@@ -203,13 +228,17 @@ struct Args {
     #[arg(short, long)]
     thread: bool,
 
-    /// Use faster algorithm, with slightly worse properties
+    /// Use a faster algorithm (pcg64_fast) with slightly worse properties
     #[arg(short, long)]
     fast: bool,
 
     /// Limit output the the specified number of bytes
     #[arg(short, long)]
     count: Option<u64>,
+
+    /// Output random data as hex-encoded string; default is "raw" bytes
+    #[arg(short = 'H', long)]
+    hex: bool,
 
     /// User-defined seed value; if not specified, seed from OS entropy source
     seed: Option<u128>,
@@ -233,14 +262,28 @@ fn main() {
     let output = stdout().lock();
 
     if args.thread {
-        match generator {
-            Generator::Pcg64Dxsm(pcg64dxsm) => generate_mt(pcg64dxsm, output, args.count),
-            Generator::Pcg64Mcg(pcg64mcg) => generate_mt(pcg64mcg, output, args.count),
+        if !args.hex {
+            match generator {
+                Generator::Pcg64Dxsm(pcg64dxsm) => generate_mt(pcg64dxsm, output, write_raw, args.count),
+                Generator::Pcg64Mcg(pcg64mcg) => generate_mt(pcg64mcg, output, write_raw, args.count),
+            }
+        } else {
+            match generator {
+                Generator::Pcg64Dxsm(pcg64dxsm) => generate_mt(pcg64dxsm, output, write_hex, args.count),
+                Generator::Pcg64Mcg(pcg64mcg) => generate_mt(pcg64mcg, output, write_hex, args.count),
+            }
         }
     } else {
-        match generator {
-            Generator::Pcg64Dxsm(pcg64dxsm) => generate_st(pcg64dxsm, output, args.count),
-            Generator::Pcg64Mcg(pcg64mcg) => generate_st(pcg64mcg, output, args.count),
+        if !args.hex {
+            match generator {
+                Generator::Pcg64Dxsm(pcg64dxsm) => generate_st(pcg64dxsm, output, write_raw, args.count),
+                Generator::Pcg64Mcg(pcg64mcg) => generate_st(pcg64mcg, output, write_raw, args.count),
+            }
+        } else {
+            match generator {
+                Generator::Pcg64Dxsm(pcg64dxsm) => generate_st(pcg64dxsm, output, write_hex, args.count),
+                Generator::Pcg64Mcg(pcg64mcg) => generate_st(pcg64mcg, output, write_hex, args.count),
+            }
         }
     }
 }

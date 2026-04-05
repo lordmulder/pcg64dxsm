@@ -2,6 +2,7 @@
 // pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
+use hex::decode_to_slice;
 use hex_literal::hex;
 use sha3::{Digest, Sha3_512};
 use std::{
@@ -11,14 +12,14 @@ use std::{
     process::{Command, Stdio},
 };
 
-const BUFFER_SIZE: usize = 1024usize * 1024usize; //  1 MB
+const BUFFER_SIZE: usize = 512usize * 1024usize; //  512 KB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 const ENTROPY_SIZE: u64 = 16u64 * 1024u64 * 1024u64; // 16 MB
 const ENTROPY_ITER: usize = 1024usize;
 
 // ===========================================================================
-// Utilities
+// Hex Support
 // ===========================================================================
 
 struct Hex<'a>(&'a [u8]);
@@ -32,24 +33,78 @@ impl<'a> UpperHex for Hex<'a> {
     }
 }
 
-fn run_process<const N: usize>(output_size: Option<u64>, args: [&OsStr; N]) -> [u8; 64usize] {
+struct HexDecoder {
+    buffer: [u8; BUFFER_SIZE + 1usize],
+    offset: usize,
+}
+
+impl HexDecoder {
+    pub fn new() -> Self {
+        Self { buffer: [0u8; BUFFER_SIZE + 1usize], offset: 0usize }
+    }
+
+    pub fn append(&mut self, input: &[u8]) {
+        if self.buffer.len() - self.offset < input.len() {
+            panic!("Insufficient capacity!");
+        }
+
+        self.buffer[self.offset..(self.offset + input.len())].copy_from_slice(input);
+        self.offset += input.len();
+    }
+
+    pub fn decode<'a>(&mut self, output: &'a mut [u8]) -> Option<&'a [u8]> {
+        if self.offset <= 1usize {
+            return None;
+        }
+
+        let hex_length = self.offset & (!1usize);
+        let dec_length = hex_length / 2usize;
+
+        if output.len() < dec_length {
+            panic!("Output buffer is too small for the decoded data!");
+        }
+
+        decode_to_slice(&self.buffer[..hex_length], &mut output[..dec_length]).expect("Failed to decode hex data!");
+
+        if self.offset > hex_length {
+            self.buffer[0usize] = self.buffer[self.offset - 1usize];
+        }
+
+        self.offset = self.offset.checked_sub(hex_length).unwrap();
+        Some(&output[..dec_length])
+    }
+}
+
+// ===========================================================================
+// Utilities
+// ===========================================================================
+
+fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args: [&OsStr; N]) -> [u8; 64usize] {
     let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm")).args(args).stdout(Stdio::piped()).spawn().expect("Failed to spawn process!");
     let mut stdout = child_process.stdout.take().expect("No stdout!");
     let mut buffer = [0u8; BUFFER_SIZE];
+    let mut hex_decoder = if hex_decode { Some(HexDecoder::new()) } else { None };
     let mut length = 0u64;
     let mut hasher = Sha3_512::default();
 
-    loop {
-        let chunk_size = output_size.map(|target_size| target_size.saturating_sub(length).min(BUFFER_SIZE as u64) as usize).unwrap_or(BUFFER_SIZE);
-        if chunk_size == 0usize {
-            break;
-        }
-        let read_len = stdout.read(&mut buffer[..chunk_size]).expect("Failed to read data!");
+    while output_size.is_none_or(|target_size| length < target_size) {
+        let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
         if read_len == 0usize {
             break;
         }
-        hasher.update(&buffer[..read_len]);
-        length = length.checked_add(read_len as u64).unwrap();
+        if let Some(decoder) = hex_decoder.as_mut() {
+            decoder.append(&buffer[..read_len]);
+            if let Some(decoded) = decoder.decode(&mut buffer) {
+                let chunk_size =
+                    output_size.map(|target_size| target_size.saturating_sub(length).min(decoded.len() as u64) as usize).unwrap_or_else(|| decoded.len());
+                hasher.update(&decoded[..chunk_size]);
+                length = length.checked_add(chunk_size as u64).unwrap();
+            }
+        } else {
+            let chunk_size = output_size.map(|target_size| target_size.saturating_sub(length).min(read_len as u64) as usize).unwrap_or(read_len);
+            hasher.update(&buffer[..chunk_size]);
+            length = length.checked_add(chunk_size as u64).unwrap();
+        }
     }
 
     drop(stdout);
@@ -117,37 +172,37 @@ const PCG64FAST_3: [u8; 64usize] =
 
 #[test]
 fn test_pcg64dxsm_0() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("0")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_0);
 }
 
 #[test]
 fn test_pcg64dxsm_1() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("1")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("1")]);
     digest_eq!(digest, PCG64DXSM_1);
 }
 
 #[test]
 fn test_pcg64dxsm_2() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("2")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("2")]);
     digest_eq!(digest, PCG64DXSM_2);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_0() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--thread"), OsStr::new("0")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--thread"), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_0);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_1() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--thread"), OsStr::new("1")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--thread"), OsStr::new("1")]);
     digest_eq!(digest, PCG64DXSM_1);
 }
 
 #[test]
 fn test_pcg64dxsm_threaded_2() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--thread"), OsStr::new("2")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--thread"), OsStr::new("2")]);
     digest_eq!(digest, PCG64DXSM_2);
 }
 
@@ -155,7 +210,7 @@ fn test_pcg64dxsm_threaded_2() {
 fn test_pcg64dxsm_entropy() {
     let mut digest_all: Vec<[u8; 64usize]> = Vec::with_capacity(ENTROPY_ITER);
     for _i in 0usize..ENTROPY_ITER {
-        digest_all.push(run_process(Some(ENTROPY_SIZE), []));
+        digest_all.push(run_process(Some(ENTROPY_SIZE), false, []));
     }
 
     for (i, &digest_1) in digest_all.iter().enumerate() {
@@ -168,15 +223,33 @@ fn test_pcg64dxsm_entropy() {
 }
 
 #[test]
-fn test_pcg64dxsm_count_0() {
-    let digest = run_process(None, [OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+fn test_pcg64dxsm_count() {
+    let digest = run_process(None, false, [OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_3);
 }
 
 #[test]
-fn test_pcg64dxsm_count_1() {
-    let digest = run_process(None, [OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+fn test_pcg64dxsm_count_threaded() {
+    let digest = run_process(None, false, [OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_3);
+}
+
+#[test]
+fn test_pcg64dxsm_hex_0() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--hex"), OsStr::new("0")]);
+    digest_eq!(digest, PCG64DXSM_0);
+}
+
+#[test]
+fn test_pcg64dxsm_hex_1() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--hex"), OsStr::new("1")]);
+    digest_eq!(digest, PCG64DXSM_1);
+}
+
+#[test]
+fn test_pcg64dxsm_hex_2() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--hex"), OsStr::new("2")]);
+    digest_eq!(digest, PCG64DXSM_2);
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -185,37 +258,37 @@ fn test_pcg64dxsm_count_1() {
 
 #[test]
 fn test_pcg64fast_0() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("0")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_0);
 }
 
 #[test]
 fn test_pcg64fast_1() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("1")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("1")]);
     digest_eq!(digest, PCG64FAST_1);
 }
 
 #[test]
 fn test_pcg64fast_2() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("2")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("2")]);
     digest_eq!(digest, PCG64FAST_2);
 }
 
 #[test]
 fn test_pcg64fast_threaded_0() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("0")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_0);
 }
 
 #[test]
 fn test_pcg64fast_threaded_1() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("1")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("1")]);
     digest_eq!(digest, PCG64FAST_1);
 }
 
 #[test]
 fn test_pcg64fast_threaded_2() {
-    let digest = run_process(Some(OUTPUT_SIZE), [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("2")]);
+    let digest = run_process(Some(OUTPUT_SIZE), false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("2")]);
     digest_eq!(digest, PCG64FAST_2);
 }
 
@@ -223,7 +296,7 @@ fn test_pcg64fast_threaded_2() {
 fn test_pcg64fast_entropy() {
     let mut digest_all: Vec<[u8; 64usize]> = Vec::with_capacity(ENTROPY_ITER);
     for _i in 0usize..ENTROPY_ITER {
-        digest_all.push(run_process(Some(ENTROPY_SIZE), [OsStr::new("--fast")]));
+        digest_all.push(run_process(Some(ENTROPY_SIZE), false, [OsStr::new("--fast")]));
     }
 
     for (i, &digest_1) in digest_all.iter().enumerate() {
@@ -236,13 +309,31 @@ fn test_pcg64fast_entropy() {
 }
 
 #[test]
-fn test_pcg64fast_count_0() {
-    let digest = run_process(None, [OsStr::new("--fast"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+fn test_pcg64fast_count() {
+    let digest = run_process(None, false, [OsStr::new("--fast"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_3);
 }
 
 #[test]
-fn test_pcg64fast_count_1() {
-    let digest = run_process(None, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+fn test_pcg64fast_count_threaded() {
+    let digest = run_process(None, false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_3);
+}
+
+#[test]
+fn test_pcg64fast_hex_0() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--fast"), OsStr::new("--hex"), OsStr::new("0")]);
+    digest_eq!(digest, PCG64FAST_0);
+}
+
+#[test]
+fn test_pcg64fast_hex_1() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--fast"), OsStr::new("--hex"), OsStr::new("1")]);
+    digest_eq!(digest, PCG64FAST_1);
+}
+
+#[test]
+fn test_pcg64fast_hex_2() {
+    let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--fast"), OsStr::new("--hex"), OsStr::new("2")]);
+    digest_eq!(digest, PCG64FAST_2);
 }

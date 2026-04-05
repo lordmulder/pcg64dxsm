@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-const BUFFER_SIZE: usize = 1024usize * 1024usize; //  1 MB
+const BUFFER_SIZE: usize = 512usize * 1024usize; //  512 KB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 // ===========================================================================
@@ -23,21 +23,17 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
     let mut length = 0u64;
     let mut buffer = [0u8; BUFFER_SIZE];
 
-    loop {
-        let chunk_size = OUTPUT_SIZE.saturating_sub(length).min(BUFFER_SIZE as u64) as usize;
-        if chunk_size == 0usize {
-            break;
-        }
-        let read_len = stdout.read(&mut buffer[..chunk_size]).expect("Failed to read data!");
+    while length < OUTPUT_SIZE {
+        let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
         if read_len == 0usize {
             break;
         }
-        length = length.checked_add(read_len as u64).unwrap();
+        length = length.saturating_add(read_len as u64);
     }
 
     drop(stdout);
     child_process.wait().expect("Failed to wait for child process!");
-    assert_eq!(length, OUTPUT_SIZE);
+    assert!(length >= OUTPUT_SIZE);
 }
 
 // ===========================================================================
