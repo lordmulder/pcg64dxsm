@@ -85,64 +85,12 @@ mod mt {
 
     const NUM_BUFFERS: usize = 16usize;
 
+    static BUFFER: [Mutex<(bool, [u8; BUFF_SIZE])>; NUM_BUFFERS] = [const { Mutex::new((false, [0u8; _])) }; _];
+
+    static COND_FREE: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; _];
+    static COND_USED: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; _];
+
     static RUNNING: AtomicBool = AtomicBool::new(true);
-
-    static BUFFER: [Mutex<(bool, [u8; BUFF_SIZE])>; NUM_BUFFERS] = [
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-        Mutex::new((false, [0u8; _])),
-    ];
-
-    static COND_FREE: [Condvar; NUM_BUFFERS] = [
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-    ];
-
-    static COND_USED: [Condvar; NUM_BUFFERS] = [
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-        Condvar::new(),
-    ];
 
     pub fn generate<F>(mut generator: impl Rng + Send + 'static, mut output: StdoutLock, write_fn: F, count: Option<u64>)
     where
@@ -275,6 +223,7 @@ fn main() {
 
     let output = stdout().lock();
 
+    #[allow(clippy::collapsible_else_if)]
     if args.thread {
         if !args.hex {
             match generator {

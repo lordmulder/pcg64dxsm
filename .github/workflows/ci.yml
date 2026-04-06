@@ -1,0 +1,212 @@
+name: Rust CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '47 23 * * *'
+  release:
+    types: [created]
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Pre-checks
+  # --------------------------------------------------------------------------
+
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [1.89.0, 1.94.1, nightly]
+    steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: x86_64-unknown-linux-gnu
+          components: clippy, rustfmt
+          cache: false
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - if: ${{ github.event_name == 'release' }}
+        run: |
+          [ "$(cargo pkgid | grep -Po '#\K[\d.]+$')" = "${{ github.event.release.tag_name}}" ]
+      - run: |
+          cargo check --all-targets --all-features --verbose
+          cargo clippy --all-targets --all-features
+          cargo fmt --all --check --verbose
+
+  # --------------------------------------------------------------------------
+  # Tests
+  # --------------------------------------------------------------------------
+
+  test-linux:
+    runs-on: ubuntu-24.04${{ matrix.arch == 'aarch64' && '-arm' || '' }}
+    needs: check
+    strategy:
+      matrix:
+        rust: [1.89.0, 1.94.1, nightly]
+        arch: [x86_64, i686, aarch64]
+    steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.arch }}-unknown-linux-gnu
+          cache: false
+      - if: ${{ matrix.arch == 'i686' }}
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcc-multilib libc6-dev-i386
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - run: |
+          cargo test --target ${{ matrix.arch }}-unknown-linux-gnu --release --verbose
+        env:
+          CARGO_TARGET_DIR: /tmp/pcg64dxsm-test
+
+  test-windows:
+    runs-on: windows-${{ matrix.arch == 'aarch64' && '11-arm' || '2025' }}
+    needs: check
+    strategy:
+      matrix:
+        rust: [1.89.0, 1.94.1, nightly]
+        arch: [x86_64, i686, aarch64]
+    steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.arch }}-pc-windows-msvc
+          cache: false
+      - run: git config --global core.symlinks false
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          iex "cargo test --workspace --target ${{ matrix.arch }}-pc-windows-msvc --release --verbose"
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}\pcg64dxsm-test
+
+  test-macos:
+    runs-on: macos-latest
+    needs: check
+    strategy:
+      matrix:
+        rust: [1.89.0, 1.94.1, nightly]
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.arch }}-apple-darwin
+          cache: false
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - run: |
+          cargo test --target ${{ matrix.arch }}-apple-darwin --release --verbose
+        env:
+          CARGO_TARGET_DIR: /tmp/pcg64dxsm-test
+
+  # --------------------------------------------------------------------------
+  # Build
+  # --------------------------------------------------------------------------
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: [test-linux, test-windows, test-macos]
+    container:
+      image: lordmulder/rust-xbuild:1.94-trixie-r4
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - working-directory: ${{ github.workspace }}/.build/linux
+        run: make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcg64dxsm-linux
+          path: ${{ github.workspace }}/.build/linux/out/target/*.*
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ github.workspace }}/.build/linux/out/target/release/doc
+
+  build-windows:
+    runs-on: windows-latest
+    needs: [test-linux, test-windows, test-macos]
+    steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.94.1
+          target: x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc
+          components: rust-src
+          cache: false
+          rustflags: "-Dwarnings -Ctarget-feature=+crt-static"
+      - run: |
+          git config --global core.symlinks false
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - working-directory: ${{ github.workspace }}/.build/windows
+        run: cmd.exe /c make.cmd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcg64dxsm-windows
+          path: ${{ github.workspace }}/.build/windows/out/target/*.*
+
+  build-macos:
+    runs-on: macos-latest
+    needs: [test-linux, test-windows, test-macos]
+    steps:
+      - run: git config --global --add safe.directory '*'
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.94.1
+          target: x86_64-apple-darwin, aarch64-apple-darwin
+          cache: false
+          rustflags: "-Dwarnings -Ctarget-feature=+crt-static"
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+      - working-directory: ${{ github.workspace }}/.build/bsd-unix
+        run: ./build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcg64dxsm-macos
+          path: ${{ github.workspace }}/.build/bsd-unix/out/target/*.*
+
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # Deploy
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  release:
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-windows, build-macos]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pcg64dxsm-*
+          path: artifacts
+          merge-multiple: true
+      - uses: Roang-zero1/github-upload-release-artifacts-action@v2
+        with:
+          args: artifacts/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
