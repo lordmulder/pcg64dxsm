@@ -6,14 +6,13 @@ version = "1.2.1"
 edition = "2024"
 
 [dependencies]
+blake2 = "=0.11.0-rc.5"
 clap = { version = "4.6.0", features = ["derive"] }
 getrandom = "0.4.2"
 hex = "0.4.3"
 hex-literal = "1.1.0"
-hkdf = "0.13.0"
 parking_lot = "0.12.5"
 rand_pcg = "0.10.1"
-sha3 = "0.11.0"
 
 [dev-dependencies]
 rolling-median = "1.5.5"

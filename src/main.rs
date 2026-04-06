@@ -2,12 +2,11 @@
 // pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
+use blake2::{Blake2b128, Blake2b256, Digest};
 use clap::Parser;
 use hex::encode_to_slice;
 use hex_literal::hex;
-use hkdf::Hkdf;
 use rand_pcg::{Lcg128CmDxsm64, Mcg128Xsl64, rand_core::SeedableRng};
-use sha3::Sha3_256;
 use std::{
     io::{Error as IoError, Write, stdout},
     mem::MaybeUninit,
@@ -27,21 +26,24 @@ const BUFF_SIZE: usize = 8192usize;
 // ===========================================================================
 
 /// First 32 bytes of the fractional part of ***e*** (Euler's number)
-///
-/// This is an arbitrary but unsuspicious (nothing-up-my-sleeve) choice for a sufficiantly "random" value that we can use as a salt.
-///
-/// Replace with a custom "salt" value as needed!
-const SALT_VALUE: [u8; 32usize] = hex!("B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF");
+const SALT_1: [u8; 32usize] = hex!("B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF");
 
-fn derive_seed<const N: usize>(input: u128, label: &[u8]) -> [u8; N] {
-    let mut seed_value = [0u8; _];
-    let hkdf = Hkdf::<Sha3_256>::new(Some(&SALT_VALUE[..]), &input.to_be_bytes());
-    hkdf.expand(label, &mut seed_value).unwrap();
-    seed_value
+/// First 16 bytes of the fractional part of ***&pi;*** (pi)
+const SALT_2: [u8; 16usize] = hex!("243F6A8885A308D313198A2E03707344");
+
+#[inline(always)]
+fn derive_seed_256(input: u128) -> [u8; 32usize] {
+    Blake2b256::default().chain_update(input.to_be_bytes()).chain_update(SALT_1).finalize().into()
 }
 
+#[inline(always)]
+fn derive_seed_128(input: u128) -> [u8; 16usize] {
+    Blake2b128::default().chain_update(input.to_be_bytes()).chain_update(SALT_2).finalize().into()
+}
+
+#[inline(always)]
 fn get_os_entropy<const N: usize>() -> [u8; N] {
-    let mut seed_value = [0u8; _];
+    let mut seed_value = [0u8; N];
     getrandom::fill(&mut seed_value).expect("Failed to generate seed!");
     seed_value
 }
@@ -85,10 +87,10 @@ mod mt {
 
     const NUM_BUFFERS: usize = 16usize;
 
-    static BUFFER: [Mutex<(bool, [u8; BUFF_SIZE])>; NUM_BUFFERS] = [const { Mutex::new((false, [0u8; _])) }; _];
+    static BUFFER: [Mutex<(bool, [u8; BUFF_SIZE])>; NUM_BUFFERS] = [const { Mutex::new((false, [0u8; BUFF_SIZE])) }; NUM_BUFFERS];
 
-    static COND_FREE: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; _];
-    static COND_USED: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; _];
+    static COND_FREE: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
+    static COND_USED: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
 
     static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -211,12 +213,12 @@ fn main() {
 
     let generator = if !args.fast {
         match args.seed {
-            Some(input) => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(derive_seed(input, b"Lcg128CmDxsm64"))),
+            Some(input) => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(derive_seed_256(input))),
             None => Generator::Pcg64Dxsm(Lcg128CmDxsm64::from_seed(get_os_entropy())),
         }
     } else {
         match args.seed {
-            Some(input) => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(derive_seed(input, b"Mcg128Xsl64"))),
+            Some(input) => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(derive_seed_128(input))),
             None => Generator::Pcg64Mcg(Mcg128Xsl64::from_seed(get_os_entropy())),
         }
     };
