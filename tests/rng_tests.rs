@@ -2,7 +2,7 @@
 // pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
-use hex::decode_to_slice;
+use hex::{FromHexError, decode_to_slice};
 use hex_literal::hex;
 use sha3::{Digest, Sha3_512};
 use std::{
@@ -33,45 +33,49 @@ impl<'a> UpperHex for Hex<'a> {
     }
 }
 
-struct HexDecoder {
-    buffer: [u8; BUFFER_SIZE + 1usize],
+// ===========================================================================
+// Hex Decoder
+// ===========================================================================
+
+struct HexDecoder<const N: usize> {
+    buffer: [u8; N],
     offset: usize,
 }
 
-impl HexDecoder {
+impl<const N: usize> HexDecoder<N> {
     pub fn new() -> Self {
-        Self { buffer: [0u8; BUFFER_SIZE + 1usize], offset: 0usize }
+        const {
+            assert!((N > 0usize) && (N & 1usize == 0usize));
+        }
+        Self { buffer: [0u8; N], offset: 0usize }
     }
 
-    pub fn append(&mut self, input: &[u8]) {
-        if self.buffer.len() - self.offset < input.len() {
-            panic!("Insufficient capacity!");
+    pub fn decode_inplace<'a>(&mut self, input: &'a mut [u8]) -> Result<&'a [u8], FromHexError> {
+        let mut pos_get = 0usize;
+        let mut pos_put = 0usize;
+
+        while pos_get < input.len() {
+            let copy_len = input.len().saturating_sub(pos_get).min(N.saturating_sub(self.offset));
+            if copy_len > 0usize {
+                self.buffer[self.offset..(self.offset + copy_len)].copy_from_slice(&input[pos_get..(pos_get + copy_len)]);
+                pos_get = pos_get.checked_add(copy_len).unwrap();
+                self.offset = self.offset.checked_add(copy_len).unwrap();
+            }
+
+            let decode_len = self.offset & (!1usize);
+            if decode_len > 0usize {
+                let output_len = decode_len / 2usize;
+                decode_to_slice(&self.buffer[..decode_len], &mut input[pos_put..(pos_put + output_len)])?;
+                if decode_len != self.offset {
+                    assert_eq!(self.offset - decode_len, 1usize);
+                    self.buffer[0usize] = self.buffer[self.offset - 1usize];
+                }
+                pos_put = pos_put.checked_add(output_len).unwrap();
+                self.offset = self.offset.checked_sub(decode_len).unwrap();
+            }
         }
 
-        self.buffer[self.offset..(self.offset + input.len())].copy_from_slice(input);
-        self.offset += input.len();
-    }
-
-    pub fn decode<'a>(&mut self, output: &'a mut [u8]) -> Option<&'a [u8]> {
-        if self.offset <= 1usize {
-            return None;
-        }
-
-        let hex_length = self.offset & (!1usize);
-        let dec_length = hex_length / 2usize;
-
-        if output.len() < dec_length {
-            panic!("Output buffer is too small for the decoded data!");
-        }
-
-        decode_to_slice(&self.buffer[..hex_length], &mut output[..dec_length]).expect("Failed to decode hex data!");
-
-        if self.offset > hex_length {
-            self.buffer[0usize] = self.buffer[self.offset - 1usize];
-        }
-
-        self.offset = self.offset.checked_sub(hex_length).unwrap();
-        Some(&output[..dec_length])
+        Ok(&input[..pos_put])
     }
 }
 
@@ -83,7 +87,7 @@ fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args:
     let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm")).args(args).stdout(Stdio::piped()).spawn().expect("Failed to spawn process!");
     let mut stdout = child_process.stdout.take().expect("No stdout!");
     let mut buffer = [0u8; BUFFER_SIZE];
-    let mut hex_decoder = if hex_decode { Some(HexDecoder::new()) } else { None };
+    let mut hex_decoder = if hex_decode { Some(HexDecoder::<8192usize>::new()) } else { None };
     let mut length = 0u64;
     let mut hasher = Sha3_512::default();
 
@@ -93,10 +97,9 @@ fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args:
             break;
         }
         if let Some(decoder) = hex_decoder.as_mut() {
-            decoder.append(&buffer[..read_len]);
-            if let Some(decoded) = decoder.decode(&mut buffer) {
-                let chunk_size =
-                    output_size.map(|target_size| target_size.saturating_sub(length).min(decoded.len() as u64) as usize).unwrap_or_else(|| decoded.len());
+            let decoded = decoder.decode_inplace(&mut buffer[..read_len]).expect("Failed to decode hex-encoded input!");
+            if !decoded.is_empty() {
+                let chunk_size = output_size.map(|target_size| target_size.saturating_sub(length).min(decoded.len() as u64) as usize).unwrap_or(decoded.len());
                 hasher.update(&decoded[..chunk_size]);
                 length = length.checked_add(chunk_size as u64).unwrap();
             }
@@ -166,6 +169,9 @@ const PCG64FAST_2: [u8; 64usize] =
 const PCG64FAST_3: [u8; 64usize] =
     hex!("017C0265677C70CC7035E9A42F2798515BEF1F09E0837055C4A8DCE9E43DE2D7FDAC13B481B2A34DB9899DB6B744A14C29AA34851FC7597B427D69CFCA61E77A");
 
+/// Count to be sued for all `--count` test cases
+const COUNT: usize = 4294967291usize;
+
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // pcg64_dxsm
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -224,13 +230,13 @@ fn test_pcg64dxsm_entropy() {
 
 #[test]
 fn test_pcg64dxsm_count() {
-    let digest = run_process(None, false, [OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+    let digest = run_process(None, false, [OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_3);
 }
 
 #[test]
 fn test_pcg64dxsm_count_threaded() {
-    let digest = run_process(None, false, [OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+    let digest = run_process(None, false, [OsStr::new("--thread"), OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("0")]);
     digest_eq!(digest, PCG64DXSM_3);
 }
 
@@ -250,6 +256,12 @@ fn test_pcg64dxsm_hex_1() {
 fn test_pcg64dxsm_hex_2() {
     let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--hex"), OsStr::new("2")]);
     digest_eq!(digest, PCG64DXSM_2);
+}
+
+#[test]
+fn test_pcg64dxsm_count_hex() {
+    let digest = run_process(None, true, [OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("--hex"), OsStr::new("0")]);
+    digest_eq!(digest, PCG64DXSM_3);
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -310,13 +322,14 @@ fn test_pcg64fast_entropy() {
 
 #[test]
 fn test_pcg64fast_count() {
-    let digest = run_process(None, false, [OsStr::new("--fast"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+    let digest = run_process(None, false, [OsStr::new("--fast"), OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_3);
 }
 
 #[test]
 fn test_pcg64fast_count_threaded() {
-    let digest = run_process(None, false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("--count"), OsStr::new("4294967291"), OsStr::new("0")]);
+    let digest =
+        run_process(None, false, [OsStr::new("--fast"), OsStr::new("--thread"), OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("0")]);
     digest_eq!(digest, PCG64FAST_3);
 }
 
@@ -336,4 +349,10 @@ fn test_pcg64fast_hex_1() {
 fn test_pcg64fast_hex_2() {
     let digest = run_process(Some(OUTPUT_SIZE), true, [OsStr::new("--fast"), OsStr::new("--hex"), OsStr::new("2")]);
     digest_eq!(digest, PCG64FAST_2);
+}
+
+#[test]
+fn test_pcg64fast_count_hex() {
+    let digest = run_process(None, true, [OsStr::new("--fast"), OsStr::new("--count"), OsStr::new(&COUNT.to_string()), OsStr::new("--hex"), OsStr::new("0")]);
+    digest_eq!(digest, PCG64FAST_3);
 }
