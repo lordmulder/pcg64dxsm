@@ -7,40 +7,61 @@ use std::{
     ffi::OsStr,
     io::Read,
     process::{Command, Stdio},
+    sync::LazyLock,
     time::Instant,
 };
 
-const BUFFER_SIZE: usize = 512usize * 1024usize; //  512 KB
+const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 // ===========================================================================
 // Utilities
 // ===========================================================================
 
+static NULL_OUTPUT: LazyLock<bool> = LazyLock::new(|| {
+    option_env!("BENCH_NULL_STDOUT")
+        .map(str::trim_ascii)
+        .filter(|str| !str::is_empty(str))
+        .and_then(|str| str.parse::<usize>().ok())
+        .map(|val| val > 0usize)
+        .unwrap_or_default()
+});
+
 fn run_process<const N: usize>(args: [&OsStr; N]) {
-    let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm")).args(args).stdout(Stdio::piped()).spawn().expect("Failed to spawn process!");
-    let mut stdout = child_process.stdout.take().expect("No stdout!");
+    let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm"))
+        .args(args)
+        .args([OsStr::new("--count"), OsStr::new(&OUTPUT_SIZE.to_string())])
+        .stderr(Stdio::null())
+        .stdout(if *NULL_OUTPUT { Stdio::null() } else { Stdio::piped() })
+        .spawn()
+        .expect("Failed to spawn the child process!");
+
     let mut length = 0u64;
     let mut buffer = [0u8; BUFFER_SIZE];
 
-    while length < OUTPUT_SIZE {
-        let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
-        if read_len == 0usize {
-            break;
+    if !*NULL_OUTPUT {
+        let mut stdout = child_process.stdout.take().expect("No stdout!");
+        loop {
+            let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
+            if read_len == 0usize {
+                break;
+            }
+            length = length.saturating_add(read_len as u64);
         }
-        length = length.saturating_add(read_len as u64);
     }
 
-    drop(stdout);
     child_process.wait().expect("Failed to wait for child process!");
-    assert!(length >= OUTPUT_SIZE);
+
+    if !*NULL_OUTPUT {
+        assert_eq!(length, OUTPUT_SIZE);
+    }
 }
 
 // ===========================================================================
 // Benchmarks
 // ===========================================================================
 
-const REPEAT_COUNT: usize = 9usize;
+const REPEAT_COUNT: usize = 13usize;
 
 fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
     println!("[{}]", name);
@@ -54,13 +75,13 @@ fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
         let start_time = Instant::now();
         bench_fn();
         let elapsed = start_time.elapsed().as_secs_f64();
-        println!("Run {} of {}: Execution completed after {:.2} second(s)", i + 1usize, REPEAT_COUNT, elapsed);
+        println!("Run {:2} of {:2}: Execution completed after {:.2} second(s)", i + 1usize, REPEAT_COUNT, elapsed);
         median.push(elapsed).unwrap();
     }
 
     let median_time = median.get().unwrap();
     let throughput = (OUTPUT_SIZE as f64) / median_time / 1048576f64;
-    println!("Finished -> Median execution time: {:.2} second(s) [{:.2} MiB/s]\n", median_time, throughput);
+    println!("Finished -> Median execution time: {:.2} second(s) [{:.3} MiB/s]\n", median_time, throughput);
     throughput
 }
 
@@ -71,8 +92,8 @@ fn main() {
     let pcg64fast_mt = run_bench("pcg64fast-MT", || run_process([OsStr::new("--fast"), OsStr::new("--thread")]));
 
     println!("[Summary]");
-    println!("pcg64dxsm-ST: {:.2} MiB/s", pcg64dxsm_st);
-    println!("pcg64dxsm-MT: {:.2} MiB/s", pcg64dxsm_mt);
-    println!("pcg64fast-ST: {:.2} MiB/s", pcg64fast_st);
-    println!("pcg64fast-MT: {:.2} MiB/s", pcg64fast_mt);
+    println!("pcg64dxsm-ST: {:7.2} MiB/s", pcg64dxsm_st);
+    println!("pcg64dxsm-MT: {:7.2} MiB/s", pcg64dxsm_mt);
+    println!("pcg64fast-ST: {:7.2} MiB/s", pcg64fast_st);
+    println!("pcg64fast-MT: {:7.2} MiB/s", pcg64fast_mt);
 }

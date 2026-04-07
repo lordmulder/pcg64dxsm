@@ -12,7 +12,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-const BUFFER_SIZE: usize = 512usize * 1024usize; //  512 KB
+const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 const ENTROPY_SIZE: u64 = 16u64 * 1024u64 * 1024u64; // 16 MB
@@ -84,7 +84,13 @@ impl<const N: usize> HexDecoder<N> {
 // ===========================================================================
 
 fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args: [&OsStr; N]) -> [u8; 32usize] {
-    let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm")).args(args).stdout(Stdio::piped()).spawn().expect("Failed to spawn process!");
+    let mut child_process = Command::new(env!("CARGO_BIN_EXE_pcg64dxsm"))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn the child process!");
+
     let mut stdout = child_process.stdout.take().expect("No stdout!");
     let mut buffer = [0u8; BUFFER_SIZE];
     let mut hex_decoder = if hex_decode { Some(HexDecoder::<8192usize>::new()) } else { None };
