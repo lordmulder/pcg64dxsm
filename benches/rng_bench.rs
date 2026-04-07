@@ -61,7 +61,7 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
 // Benchmarks
 // ===========================================================================
 
-const REPEAT_COUNT: usize = 13usize;
+const REPEAT_COUNT: usize = 25usize;
 
 fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
     println!("[{}]", name);

@@ -18,9 +18,6 @@ enum Generator {
     Pcg64Mcg(Mcg128Xsl64),
 }
 
-/// Buffer size
-const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
-
 // ===========================================================================
 // Utilities
 // ===========================================================================
@@ -49,8 +46,8 @@ fn get_os_entropy<const N: usize>() -> [u8; N] {
 }
 
 #[inline(always)]
-fn remaining(total_bytes: u64, bytes_written: u64) -> usize {
-    total_bytes.saturating_sub(bytes_written).min(BUFFER_SIZE as u64) as usize
+fn remaining<const LIMIT: usize>(total_bytes: u64, bytes_written: u64) -> usize {
+    total_bytes.saturating_sub(bytes_written).min(LIMIT as u64) as usize
 }
 
 // ===========================================================================
@@ -64,11 +61,18 @@ fn write_raw(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
 
 #[inline(always)]
 fn write_hex(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
-    let mut array: MaybeUninit<[u8; 2usize * BUFFER_SIZE]> = MaybeUninit::uninit();
+    const CHUNK_SIZE: usize = 16usize * 1024usize;
+
+    let mut array: MaybeUninit<[u8; 2usize * CHUNK_SIZE]> = MaybeUninit::uninit();
     let hex_buffer = unsafe { array.assume_init_mut() };
-    let hex_length = data.len().checked_mul(2usize).unwrap();
-    encode_to_slice(data, &mut hex_buffer[..hex_length]).unwrap();
-    output.write_all(&hex_buffer[..hex_length])
+
+    for chunk in data.chunks(CHUNK_SIZE) {
+        let hex_length = chunk.len().checked_mul(2usize).unwrap();
+        encode_to_slice(chunk, &mut hex_buffer[..hex_length]).unwrap();
+        output.write_all(&hex_buffer[..hex_length])?;
+    }
+
+    Ok(())
 }
 
 // ===========================================================================
@@ -76,7 +80,7 @@ fn write_hex(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
 // ===========================================================================
 
 mod mt {
-    use super::{BUFFER_SIZE, remaining};
+    use super::remaining;
     use parking_lot::{Condvar, Mutex};
     use rand_pcg::rand_core::Rng;
     use std::{
@@ -85,12 +89,13 @@ mod mt {
         thread,
     };
 
-    const BUFFER_COUNT: usize = 12usize;
+    const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
+    const NUM_BUFFERS: usize = 16usize;
 
     static RUNNING_FLAG: AtomicBool = AtomicBool::new(true);
-    static BUFFER: [Mutex<(bool, [u8; BUFFER_SIZE])>; BUFFER_COUNT] = [const { Mutex::new((false, [0u8; BUFFER_SIZE])) }; BUFFER_COUNT];
-    static COND_FREE: [Condvar; BUFFER_COUNT] = [const { Condvar::new() }; BUFFER_COUNT];
-    static COND_USED: [Condvar; BUFFER_COUNT] = [const { Condvar::new() }; BUFFER_COUNT];
+    static BUFFER: [Mutex<(bool, [u8; BUFFER_SIZE])>; NUM_BUFFERS] = [const { Mutex::new((false, [0u8; BUFFER_SIZE])) }; NUM_BUFFERS];
+    static COND_FREE: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
+    static COND_USED: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
 
     pub fn generate<F>(mut generator: impl Rng + Send + 'static, mut output: StdoutLock, write_fn: F, count: Option<u64>)
     where
@@ -100,7 +105,7 @@ mod mt {
 
         let handle = thread::spawn(move || {
             while RUNNING_FLAG.load(Ordering::Relaxed) {
-                for i in 0usize..BUFFER_COUNT {
+                for i in 0usize..NUM_BUFFERS {
                     let mut buffer = BUFFER[i].lock();
                     while buffer.0 {
                         COND_FREE[i].wait(&mut buffer);
@@ -113,8 +118,8 @@ mod mt {
         });
 
         'out_loop: loop {
-            for i in 0usize..BUFFER_COUNT {
-                let chunk_size = count.map(|total_bytes| remaining(total_bytes, bytes_written)).unwrap_or(BUFFER_SIZE);
+            for i in 0usize..NUM_BUFFERS {
+                let chunk_size = count.map(|total_bytes| remaining::<BUFFER_SIZE>(total_bytes, bytes_written)).unwrap_or(BUFFER_SIZE);
                 if chunk_size == 0usize {
                     break 'out_loop;
                 }
@@ -133,7 +138,7 @@ mod mt {
 
         RUNNING_FLAG.store(false, Ordering::Relaxed);
 
-        for i in 0usize..BUFFER_COUNT {
+        for i in 0usize..NUM_BUFFERS {
             let mut buffer = BUFFER[i].lock();
             buffer.0 = false;
             COND_FREE[i].notify_one();
@@ -148,9 +153,11 @@ mod mt {
 // ===========================================================================
 
 mod st {
-    use super::{BUFFER_SIZE, remaining};
+    use super::remaining;
     use rand_pcg::rand_core::Rng;
     use std::io::{Error as IoError, StdoutLock, Write};
+
+    const BUFFER_SIZE: usize = 32usize * 1024usize; // 32 KB
 
     pub fn generate<F>(mut generator: impl Rng, mut output: StdoutLock, write_fn: F, count: Option<u64>)
     where
@@ -161,7 +168,7 @@ mod st {
 
         if let Some(total_bytes) = count {
             while bytes_written < total_bytes {
-                let chunk_size = remaining(total_bytes, bytes_written);
+                let chunk_size = remaining::<BUFFER_SIZE>(total_bytes, bytes_written);
                 generator.fill_bytes(&mut buffer[..chunk_size]);
                 if write_fn(&mut output, &buffer[..chunk_size]).is_err() {
                     break;
