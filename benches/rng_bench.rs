@@ -2,8 +2,10 @@
 // pcg64dxsm application
 // Copyright (C) 2026 by LoRd_MuldeR <mulder2@gmx.de>
 
+use clap::Parser;
 use rolling_median::Median;
 use std::{
+    env,
     ffi::OsStr,
     io::Read,
     mem::MaybeUninit,
@@ -77,7 +79,7 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
 // Benchmarks
 // ===========================================================================
 
-const REPEAT_COUNT: usize = 25usize;
+const REPEAT_COUNT: usize = 99usize;
 
 fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
     println!("[{}]", name);
@@ -101,11 +103,41 @@ fn run_bench<F: Fn()>(name: &str, bench_fn: F) -> f64 {
     throughput
 }
 
+// ===========================================================================
+// Main
+// ===========================================================================
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Run the single-threaded benchmarks only
+    #[arg(long, conflicts_with = "mt")]
+    st: bool,
+
+    /// Run the multi-threaded benchmarks only
+    #[arg(long, conflicts_with = "st")]
+    mt: bool,
+
+    /// Omnipresent argument (it will be ignored)
+    #[arg(long)]
+    _bench: bool,
+}
+
+macro_rules! run_if {
+    ($flag:ident, $name:literal, $args:expr) => {
+        if !$flag { f64::NAN } else { run_bench($name, || run_process($args)) }
+    };
+}
+
 fn main() {
-    let pcg64dxsm_st = run_bench("pcg64dxsm-ST", || run_process([]));
-    let pcg64dxsm_mt = run_bench("pcg64dxsm-MT", || run_process([OsStr::new("--thread")]));
-    let pcg64fast_st = run_bench("pcg64fast-ST", || run_process([OsStr::new("--fast")]));
-    let pcg64fast_mt = run_bench("pcg64fast-MT", || run_process([OsStr::new("--fast"), OsStr::new("--thread")]));
+    let args = Args::parse();
+
+    let run_st = args.st || !args.mt;
+    let run_mt = args.mt || !args.st;
+
+    let pcg64dxsm_st = run_if!(run_st, "pcg64dxsm-ST", []);
+    let pcg64dxsm_mt = run_if!(run_mt, "pcg64dxsm-MT", [OsStr::new("--thread")]);
+    let pcg64fast_st = run_if!(run_st, "pcg64fast-ST", [OsStr::new("--fast")]);
+    let pcg64fast_mt = run_if!(run_mt, "pcg64fast-MT", [OsStr::new("--fast"), OsStr::new("--thread")]);
 
     println!("[Summary]");
     println!("pcg64dxsm-ST: {:7.2} MiB/s", pcg64dxsm_st);
