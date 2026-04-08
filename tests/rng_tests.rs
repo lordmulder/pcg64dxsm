@@ -9,6 +9,7 @@ use std::{
     ffi::OsStr,
     fmt::UpperHex,
     io::Read,
+    mem::MaybeUninit,
     process::{Command, Stdio},
 };
 
@@ -17,6 +18,21 @@ const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
 
 const ENTROPY_SIZE: u64 = 16u64 * 1024u64 * 1024u64; // 16 MB
 const ENTROPY_ITER: usize = 1024usize;
+
+// ===========================================================================
+// Types
+// ===========================================================================
+
+/// The aligned byte buffer (64 bytes)
+#[repr(align(64))]
+struct AlignedBuffer<const CAPACITY: usize>(pub [u8; CAPACITY]);
+
+impl<const CAPACITY: usize> AlignedBuffer<CAPACITY> {
+    fn uninit() -> Self {
+        let array: MaybeUninit<[u8; CAPACITY]> = MaybeUninit::uninit();
+        Self(unsafe { array.assume_init() })
+    }
+}
 
 // ===========================================================================
 // Hex Support
@@ -38,7 +54,7 @@ impl UpperHex for Hex<'_> {
 // ===========================================================================
 
 struct HexDecoder<const N: usize> {
-    buffer: [u8; N],
+    buffer: AlignedBuffer<N>,
     offset: usize,
 }
 
@@ -47,7 +63,7 @@ impl<const N: usize> HexDecoder<N> {
         const {
             assert!((N > 0usize) && (N & 1usize == 0usize));
         }
-        Self { buffer: [0u8; N], offset: 0usize }
+        Self { buffer: AlignedBuffer::uninit(), offset: 0usize }
     }
 
     pub fn decode_inplace<'a>(&mut self, input: &'a mut [u8]) -> Result<&'a [u8], FromHexError> {
@@ -57,7 +73,7 @@ impl<const N: usize> HexDecoder<N> {
         while pos_get < input.len() {
             let copy_len = input.len().saturating_sub(pos_get).min(N.saturating_sub(self.offset));
             if copy_len > 0usize {
-                self.buffer[self.offset..(self.offset + copy_len)].copy_from_slice(&input[pos_get..(pos_get + copy_len)]);
+                self.buffer.0[self.offset..(self.offset + copy_len)].copy_from_slice(&input[pos_get..(pos_get + copy_len)]);
                 pos_get = pos_get.checked_add(copy_len).unwrap();
                 self.offset = self.offset.checked_add(copy_len).unwrap();
             }
@@ -65,10 +81,10 @@ impl<const N: usize> HexDecoder<N> {
             let decode_len = self.offset & (!1usize);
             if decode_len > 0usize {
                 let output_len = decode_len / 2usize;
-                decode_to_slice(&self.buffer[..decode_len], &mut input[pos_put..(pos_put + output_len)])?;
+                decode_to_slice(&self.buffer.0[..decode_len], &mut input[pos_put..(pos_put + output_len)])?;
                 if decode_len != self.offset {
                     assert_eq!(self.offset - decode_len, 1usize);
-                    self.buffer[0usize] = self.buffer[self.offset - 1usize];
+                    self.buffer.0[0usize] = self.buffer.0[self.offset - 1usize];
                 }
                 pos_put = pos_put.checked_add(output_len).unwrap();
                 self.offset = self.offset.checked_sub(decode_len).unwrap();
@@ -91,19 +107,19 @@ fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args:
         .spawn()
         .expect("Failed to spawn the child process!");
 
-    let mut stdout = child_process.stdout.take().expect("No stdout!");
-    let mut buffer = [0u8; BUFFER_SIZE];
+    let mut stdout = child_process.stdout.take().expect("No stdout stream!");
+    let mut buffer: AlignedBuffer<BUFFER_SIZE> = AlignedBuffer::uninit();
     let mut hex_decoder = if hex_decode { Some(HexDecoder::<8192usize>::new()) } else { None };
     let mut length = 0u64;
     let mut hasher = Blake2b256::default();
 
     while output_size.is_none_or(|target_size| length < target_size) {
-        let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
+        let read_len = stdout.read(&mut buffer.0).expect("Failed to read data from child process!");
         if read_len == 0usize {
             break;
         }
         if let Some(decoder) = hex_decoder.as_mut() {
-            let decoded = decoder.decode_inplace(&mut buffer[..read_len]).expect("Failed to decode hex-encoded input!");
+            let decoded = decoder.decode_inplace(&mut buffer.0[..read_len]).expect("Failed to decode hex-encoded input!");
             if !decoded.is_empty() {
                 let chunk_size = output_size.map(|target_size| target_size.saturating_sub(length).min(decoded.len() as u64) as usize).unwrap_or(decoded.len());
                 hasher.update(&decoded[..chunk_size]);
@@ -111,7 +127,7 @@ fn run_process<const N: usize>(output_size: Option<u64>, hex_decode: bool, args:
             }
         } else {
             let chunk_size = output_size.map(|target_size| target_size.saturating_sub(length).min(read_len as u64) as usize).unwrap_or(read_len);
-            hasher.update(&buffer[..chunk_size]);
+            hasher.update(&buffer.0[..chunk_size]);
             length = length.checked_add(chunk_size as u64).unwrap();
         }
     }
