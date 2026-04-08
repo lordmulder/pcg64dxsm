@@ -12,10 +12,29 @@ use std::{
     mem::MaybeUninit,
 };
 
+// ===========================================================================
+// Types
+// ===========================================================================
+
 /// Supported random number generators
 enum Generator {
     Pcg64Dxsm(Lcg128CmDxsm64),
     Pcg64Mcg(Mcg128Xsl64),
+}
+
+/// The aligned byte buffer (64 bytes)
+#[repr(align(64))]
+struct AlignedBuffer<const CAPACITY: usize>(pub [u8; CAPACITY]);
+
+impl<const CAPACITY: usize> AlignedBuffer<CAPACITY> {
+    const fn default() -> Self {
+        Self([0u8; CAPACITY])
+    }
+
+    fn uninit() -> Self {
+        let array: MaybeUninit<[u8; CAPACITY]> = MaybeUninit::uninit();
+        Self(unsafe { array.assume_init() })
+    }
 }
 
 // ===========================================================================
@@ -62,14 +81,12 @@ fn write_raw(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
 #[inline(always)]
 fn write_hex(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
     const CHUNK_SIZE: usize = 16usize * 1024usize;
-
-    let mut array: MaybeUninit<[u8; 2usize * CHUNK_SIZE]> = MaybeUninit::uninit();
-    let hex_buffer = unsafe { array.assume_init_mut() };
+    let mut hex_buffer: AlignedBuffer<{ 2usize * CHUNK_SIZE }> = AlignedBuffer::uninit();
 
     for chunk in data.chunks(CHUNK_SIZE) {
         let hex_length = chunk.len().checked_mul(2usize).unwrap();
-        encode_to_slice(chunk, &mut hex_buffer[..hex_length]).unwrap();
-        output.write_all(&hex_buffer[..hex_length])?;
+        encode_to_slice(chunk, &mut hex_buffer.0[..hex_length]).unwrap();
+        output.write_all(&hex_buffer.0[..hex_length])?;
     }
 
     Ok(())
@@ -80,7 +97,7 @@ fn write_hex(output: &mut dyn Write, data: &[u8]) -> Result<(), IoError> {
 // ===========================================================================
 
 mod mt {
-    use super::remaining;
+    use super::{AlignedBuffer, remaining};
     use parking_lot::{Condvar, Mutex};
     use rand_pcg::rand_core::Rng;
     use std::{
@@ -92,8 +109,20 @@ mod mt {
     const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
     const NUM_BUFFERS: usize = 16usize;
 
+    #[repr(align(64))]
+    struct ThreadBuffer {
+        used: bool,
+        data: AlignedBuffer<BUFFER_SIZE>,
+    }
+
+    impl ThreadBuffer {
+        const fn default() -> Self {
+            Self { used: false, data: AlignedBuffer::default() }
+        }
+    }
+
     static RUNNING_FLAG: AtomicBool = AtomicBool::new(true);
-    static BUFFER: [Mutex<(bool, [u8; BUFFER_SIZE])>; NUM_BUFFERS] = [const { Mutex::new((false, [0u8; BUFFER_SIZE])) }; NUM_BUFFERS];
+    static BUFFER: [Mutex<ThreadBuffer>; NUM_BUFFERS] = [const { Mutex::new(ThreadBuffer::default()) }; NUM_BUFFERS];
     static COND_FREE: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
     static COND_USED: [Condvar; NUM_BUFFERS] = [const { Condvar::new() }; NUM_BUFFERS];
 
@@ -107,11 +136,11 @@ mod mt {
             while RUNNING_FLAG.load(Ordering::Relaxed) {
                 for i in 0usize..NUM_BUFFERS {
                     let mut buffer = BUFFER[i].lock();
-                    while buffer.0 {
+                    while buffer.used {
                         COND_FREE[i].wait(&mut buffer);
                     }
-                    generator.fill_bytes(&mut buffer.1);
-                    buffer.0 = true;
+                    generator.fill_bytes(&mut buffer.data.0);
+                    buffer.used = true;
                     COND_USED[i].notify_one();
                 }
             }
@@ -124,14 +153,14 @@ mod mt {
                     break 'out_loop;
                 }
                 let mut buffer = BUFFER[i].lock();
-                while !buffer.0 {
+                while !buffer.used {
                     COND_USED[i].wait(&mut buffer);
                 }
-                if write_fn(&mut output, &buffer.1[..chunk_size]).is_err() {
+                if write_fn(&mut output, &buffer.data.0[..chunk_size]).is_err() {
                     break 'out_loop;
                 }
                 bytes_written += chunk_size as u64;
-                buffer.0 = false;
+                buffer.used = false;
                 COND_FREE[i].notify_one();
             }
         }
@@ -140,7 +169,7 @@ mod mt {
 
         for i in 0usize..NUM_BUFFERS {
             let mut buffer = BUFFER[i].lock();
-            buffer.0 = false;
+            buffer.used = false;
             COND_FREE[i].notify_one();
         }
 
@@ -153,7 +182,7 @@ mod mt {
 // ===========================================================================
 
 mod st {
-    use super::remaining;
+    use super::{AlignedBuffer, remaining};
     use rand_pcg::rand_core::Rng;
     use std::io::{Error as IoError, StdoutLock, Write};
 
@@ -164,21 +193,21 @@ mod st {
         F: Fn(&mut dyn Write, &[u8]) -> Result<(), IoError>,
     {
         let mut bytes_written = 0u64;
-        let mut buffer = [0u8; BUFFER_SIZE];
+        let mut buffer: AlignedBuffer<BUFFER_SIZE> = AlignedBuffer::default();
 
         if let Some(total_bytes) = count {
             while bytes_written < total_bytes {
                 let chunk_size = remaining::<BUFFER_SIZE>(total_bytes, bytes_written);
-                generator.fill_bytes(&mut buffer[..chunk_size]);
-                if write_fn(&mut output, &buffer[..chunk_size]).is_err() {
+                generator.fill_bytes(&mut buffer.0[..chunk_size]);
+                if write_fn(&mut output, &buffer.0[..chunk_size]).is_err() {
                     break;
                 }
                 bytes_written += chunk_size as u64;
             }
         } else {
             loop {
-                generator.fill_bytes(&mut buffer);
-                if write_fn(&mut output, &buffer).is_err() {
+                generator.fill_bytes(&mut buffer.0);
+                if write_fn(&mut output, &buffer.0).is_err() {
                     break;
                 }
             }

@@ -6,6 +6,7 @@ use rolling_median::Median;
 use std::{
     ffi::OsStr,
     io::Read,
+    mem::MaybeUninit,
     process::{Command, Stdio},
     sync::LazyLock,
     time::Instant,
@@ -13,6 +14,21 @@ use std::{
 
 const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
 const OUTPUT_SIZE: u64 = 16u64 * 1024u64 * 1024u64 * 1024u64; // 16 GB
+
+// ===========================================================================
+// Types
+// ===========================================================================
+
+/// The aligned byte buffer (64 bytes)
+#[repr(align(64))]
+struct AlignedBuffer<const CAPACITY: usize>(pub [u8; CAPACITY]);
+
+impl<const CAPACITY: usize> AlignedBuffer<CAPACITY> {
+    fn uninit() -> Self {
+        let array: MaybeUninit<[u8; CAPACITY]> = MaybeUninit::uninit();
+        Self(unsafe { array.assume_init() })
+    }
+}
 
 // ===========================================================================
 // Utilities
@@ -36,13 +52,13 @@ fn run_process<const N: usize>(args: [&OsStr; N]) {
         .spawn()
         .expect("Failed to spawn the child process!");
 
+    let mut buffer: AlignedBuffer<BUFFER_SIZE> = AlignedBuffer::uninit();
     let mut length = 0u64;
-    let mut buffer = [0u8; BUFFER_SIZE];
 
     if !*NULL_OUTPUT {
-        let mut stdout = child_process.stdout.take().expect("No stdout!");
+        let mut stdout = child_process.stdout.take().expect("No stdout stream!");
         loop {
-            let read_len = stdout.read(&mut buffer).expect("Failed to read data from child process!");
+            let read_len = stdout.read(&mut buffer.0).expect("Failed to read data from child process!");
             if read_len == 0usize {
                 break;
             }
