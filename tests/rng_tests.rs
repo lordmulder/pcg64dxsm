@@ -24,7 +24,7 @@ const ENTROPY_ITER: usize = 1024usize;
 // ===========================================================================
 
 /// The aligned byte buffer (64 bytes)
-#[repr(align(64))]
+#[repr(align(32))]
 struct AlignedBuffer<const CAPACITY: usize>(pub [u8; CAPACITY]);
 
 impl<const CAPACITY: usize> AlignedBuffer<CAPACITY> {

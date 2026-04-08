@@ -13,6 +13,27 @@ use std::{
 };
 
 // ===========================================================================
+// Macros
+// ===========================================================================
+
+macro_rules! env_usize {
+    ($name:literal, $default_value:literal) => {
+        match option_env!($name) {
+            Some(text) => match usize::from_str_radix(text, 10u32) {
+                Ok(size_value) => {
+                    if size_value < 1usize {
+                        panic!("Size must be a positive value!");
+                    }
+                    size_value
+                }
+                Err(_) => panic!("Invalid size value!"),
+            },
+            None => $default_value,
+        }
+    };
+}
+
+// ===========================================================================
 // Types
 // ===========================================================================
 
@@ -23,7 +44,7 @@ enum Generator {
 }
 
 /// The aligned byte buffer (64 bytes)
-#[repr(align(64))]
+#[repr(align(32))]
 struct AlignedBuffer<const CAPACITY: usize>(pub [u8; CAPACITY]);
 
 impl<const CAPACITY: usize> AlignedBuffer<CAPACITY> {
@@ -106,10 +127,10 @@ mod mt {
         thread,
     };
 
-    const BUFFER_SIZE: usize = 64usize * 1024usize; // 64 KB
-    const NUM_BUFFERS: usize = 16usize;
+    pub const BUFFER_SIZE: usize = env_usize!("PCG64DXSM_MT_BUFFER_SIZE", 65536usize); // 64 KB
+    pub const NUM_BUFFERS: usize = env_usize!("PCG64DXSM_MT_NUM_BUFFERS", 16usize);
 
-    #[repr(align(64))]
+    #[repr(align(32))]
     struct ThreadBuffer {
         used: bool,
         data: AlignedBuffer<BUFFER_SIZE>,
@@ -186,7 +207,7 @@ mod st {
     use rand_pcg::rand_core::Rng;
     use std::io::{Error as IoError, StdoutLock, Write};
 
-    const BUFFER_SIZE: usize = 32usize * 1024usize; // 32 KB
+    pub const BUFFER_SIZE: usize = env_usize!("PCG64DXSM_ST_BUFFER_SIZE", 32768usize); // 32 KB
 
     pub fn generate<F>(mut generator: impl Rng, mut output: StdoutLock, write_fn: F, count: Option<u64>)
     where
@@ -238,12 +259,24 @@ struct Args {
     #[arg(short = 'H', long)]
     hex: bool,
 
+    /// Print build-info and exit
+    #[arg(long, exclusive = true, hide = true)]
+    build_info: bool,
+
     /// User-defined seed value; if not specified, seed from OS entropy source
     seed: Option<u128>,
 }
 
 fn main() {
     let args = Args::parse();
+
+    if args.build_info {
+        println!("pcg64dxsm {}, built on {}", env!("CARGO_PKG_VERSION"), env!("BUILD_DATE"));
+        println!("ST_BUFFER_SIZE: {}", st::BUFFER_SIZE);
+        println!("MT_BUFFER_SIZE: {}", mt::BUFFER_SIZE);
+        println!("MT_NUM_BUFFERS: {}", mt::NUM_BUFFERS);
+        return;
+    }
 
     let generator = if !args.fast {
         match args.seed {
