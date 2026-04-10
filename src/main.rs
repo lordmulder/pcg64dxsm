@@ -128,7 +128,7 @@ mod mt {
     };
 
     pub const BUFFER_SIZE: usize = env_usize!("PCG64DXSM_MT_BUFFER_SIZE", 65536usize); // 64 KB
-    pub const NUM_BUFFERS: usize = env_usize!("PCG64DXSM_MT_NUM_BUFFERS", 16usize);
+    pub const NUM_BUFFERS: usize = env_usize!("PCG64DXSM_MT_NUM_BUFFERS", 8usize);
 
     #[repr(align(32))]
     struct ThreadBuffer {
@@ -207,7 +207,10 @@ mod st {
     use rand_pcg::rand_core::Rng;
     use std::io::{Error as IoError, StdoutLock, Write};
 
+    #[cfg(not(windows))]
     pub const BUFFER_SIZE: usize = env_usize!("PCG64DXSM_ST_BUFFER_SIZE", 32768usize); // 32 KB
+    #[cfg(windows)]
+    pub const BUFFER_SIZE: usize = env_usize!("PCG64DXSM_ST_BUFFER_SIZE", 65536usize); // 64 KB
 
     pub fn generate<F>(mut generator: impl Rng, mut output: StdoutLock, write_fn: F, count: Option<u64>)
     where
