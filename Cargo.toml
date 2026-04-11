@@ -12,7 +12,7 @@ getrandom = "0.4.2"
 hex = "0.4.3"
 hex-literal = "1.1.0"
 parking_lot = "0.12.5"
-rand_pcg = "0.10.1"
+rand_pcg = "0.10.2"
 
 [dev-dependencies]
 rolling-median = "1.5.5"
